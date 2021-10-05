@@ -5,6 +5,7 @@ from __future__ import division
 from __future__ import unicode_literals
 
 from .. import APL
+from .. import APLPyConnect
 
 import unittest
 import sys
@@ -30,7 +31,7 @@ class TestAPL(unittest.TestCase):
                 sum(5, range(10)))
 
         # niladic is invalid for this function, so should raise APLError
-        self.assertRaises(APL.APLError, sum)
+        self.assertRaises(APLPyConnect.APLError, sum)
     
     def test_operator(self):
         """Import an APL operator"""
