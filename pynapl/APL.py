@@ -34,18 +34,15 @@ def client(inp, outp, threaded=True):
 
     def run():
         if inp.lower() == 'tcp':
-            # 'outp' should be a port number
-            sock = IPC.TCPIO()
+            # then 'outp' is a port number, connect to it.
+            infile = outfile = sock = IPC.TCPIO()
             sock.connect('localhost', int(outp))
-            conn = APLPyConnect.Connection(sock, sock)
         else:
-            # Open two pipes.
-            i_f = IPC.FIFO(inp)
-            i_f.openRead()
-            o_f = IPC.FIFO(outp)
-            o_f.openWrite()
-            conn = APLPyConnect.Connection(i_f, o_f)
+            infile, outfile = IPC.FIFO(inp), IPC.FIFO(outp)
+            infile.openRead()
+            outfile.openWrite()
 
+        conn = APLPyConnect.Connection(infile=infile, outfile=outfile)
         conn.runUntilStop()
 
     if threaded:

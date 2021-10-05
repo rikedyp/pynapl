@@ -3,74 +3,55 @@
 # This program will connect to the APL side,
 # after which it will execute commands given to it.
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import unicode_literals
-from __future__ import print_function
-
-import socket
-import sys
 import os
 import signal
+import sys
 import threading
 
-# add '' near the front of sys.path so users can import stuff from the
-# current directory, just like in a normal interactive python session
-sys.path.insert(1,'')
+from . import APLPyConnect
+from . import IPC
 
-# make sure to load the module this file is actually located in 
-mypath = os.path.dirname(os.path.dirname(os.path.realpath(__file__)))
-sys.path.insert(1,mypath)
+# Allow users to import things from the cwd, just like in a normal interactive session.
+sys.path.insert(1, "")
 
-from pynapl import APLPyConnect as C
-from pynapl import IPC
 
-def runSlave(inp,outp):
+# (TODO) Understand why there's a `client` method that is the same in APL.py
+def runSlave(inp, outp):
     print("Opening input file...")
 
     # Open the input first, then the output. APL does it in the same order
     # (i.e., it opens its output first, which is Python's input). If it is
     # done the other way around, it will block.
-    
-    if inp=='TCP':
-        # then 'outp' is a port number 
-        # connect to it
-        sock = IPC.TCPIO()
+
+    if inp.lower() == 'tcp':
+        # then 'outp' is a port number, connect to it.
+        infile = outfile = sock = IPC.TCPIO()
         sock.connect('localhost', int(outp))
-        
-        conn = C.Connection(sock,sock) 
-        
     else:
-        inp = IPC.FIFO(inp)
-        inp.openRead()
+        infile, outfile = IPC.FIFO(inp), IPC.FIFO(outp)
+        infile.openRead()
+        outfile.openWrite()
 
-        outp = IPC.FIFO(outp)
-        outp.openWrite()
-
-        conn = C.Connection(inp,outp)
-   
+    conn = APLPyConnect.Connection(infile=infile, outfile=outfile)
     print("Connected.")
-
     conn.runUntilStop()
     sys.exit(0)
 
-if __name__=="__main__":
-    
+
+if __name__ == "__main__":
     # if there is '--' in the argument list, drop all arguments before
     if '--' in sys.argv:
         sys.argv = sys.argv[sys.argv.index('--'):]
 
-    infile = sys.argv[1]
-    outfile = sys.argv[2]
+    infile, outfile = sys.argv[1:3]
 
-    if hasattr(os, 'setpgrp'): os.setpgrp()
+    setpgrp = getattr(os, "setpgrp", lambda: None)  # Only available on Unix.
+    setpgrp()
+
     signal.signal(signal.SIGINT, signal.default_int_handler)
 
     if 'thread' in sys.argv:
         print("Starting thread")
-        # run in a thread
-        threading.Thread(target=lambda:runSlave(infile,outfile)).start()
+        threading.Thread(target=lambda: runSlave(infile, outfile)).start()
     else:
-        # run normally
-        runSlave(infile,outfile)
-
+        runSlave(infile, outfile)
