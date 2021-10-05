@@ -7,33 +7,23 @@
 #   0     1  2  3  4         ......
 #   TYPE  SIZE (big-endian)  MESSAGE (`size` bytes, expected to be UTF-8 encoded)
 
-from __future__ import absolute_import 
-from __future__ import division
-from __future__ import unicode_literals
-from __future__ import print_function
-
-import socket, os, time, types, signal, select, sys, json
-import tempfile, platform
+import json
+import os
+import platform
+import signal
+import sys
+import time
+import types
 from . import RunDyalog, Interrupt, WinDyalog, IPC
 from .Array import *
 from .PyEvaluator import PyEvaluator
 from .ObjectWrapper import *
 
-# in Python 2, set string types to be their Python 3 equivalents
-if sys.version_info.major == 2:
-    bytes, str = str, unicode
-
-# in Python 3, allow use of long
-if sys.version_info.major >= 3:
-    long = int
 
 # in Python 2, sockets give bytes as ASCII characters.
 # in Python 3, sockets give either Unicode or bytes as ints.
 def maybe_ord(item):
-    if type(item) in (int,long):
-        return item
-    else: 
-        return ord(item)
+    return item if isinstance(item, int) else ord(item)
 
 # these fail when threaded, but that's OK
 def ignoreInterrupts():
