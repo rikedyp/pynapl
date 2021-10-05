@@ -15,7 +15,6 @@ from . import IPC
 sys.path.insert(1, "")
 
 
-# (TODO) Understand why there's a `client` method that is the same in APL.py
 def runSlave(inp, outp):
     print("Opening input file...")
 
@@ -39,7 +38,6 @@ def runSlave(inp, outp):
 
 
 if __name__ == "__main__":
-    # if there is '--' in the argument list, drop all arguments before
     if '--' in sys.argv:
         sys.argv = sys.argv[sys.argv.index('--'):]
 
