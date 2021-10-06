@@ -20,11 +20,6 @@ from .PyEvaluator import PyEvaluator
 from .ObjectWrapper import ObjectStore, ObjectWrapper
 
 
-# in Python 2, sockets give bytes as ASCII characters.
-# in Python 3, sockets give either Unicode or bytes as ints.
-def maybe_ord(item):
-    return item if isinstance(item, int) else ord(item)
-
 # these fail when threaded, but that's OK
 def ignoreInterrupts():
     try: return signal.signal(signal.SIGINT, signal.SIG_IGN)
@@ -151,11 +146,8 @@ class Message(object):
 
             # read the header
             try:
-                inp = reader.read(1)
-
-                mtype = maybe_ord(inp)
-
-                lfield = list(map(maybe_ord, reader.read(4)))
+                mtype = ord(reader.read(1))
+                lfield = reader.read(4)
                 length = (lfield[0]<<24) + (lfield[1]<<16) + (lfield[2]<<8) + lfield[3]
             except (TypeError, IndexError, ValueError):
                 raise MalformedMessage("out of data while reading message header")
