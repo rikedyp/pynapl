@@ -2,10 +2,8 @@
 This module handles the passing of messages between the APL side and the Python side.
 """
 
-# The format of a message is:
-#   0     1  2  3  4         ......
-#   TYPE  SIZE (big-endian)  MESSAGE (`size` bytes, expected to be UTF-8 encoded)
 
+import enum
 import json
 import os
 import platform
@@ -70,35 +68,51 @@ class APLError(Exception):
         super().__init__(message)
 
 
-class MalformedMessage(Exception): pass
+class MalformedMessage(Exception):
+    """Exceptions raised when message format is wrong."""
+    pass
 
-class Message(object):
-    """A message to be sent to the other side"""
-    
-    OK=0       # sent as response to message that succeeded but returns nothing
-    PID=1      # initial message containing PID 
-    STOP=2     # break the connection
-    REPR=3     # evaluate expr, return repr (for debug)
-    EXEC=4     # execute statement(s), return OK or ERR
-    REPRRET=5  # return from "REPR"
-    
-    EVAL=10    # evaluate a Python expression, including arguments, with APL conversion
-    EVALRET=11 # message containing the result of an evaluation
 
-    DBGSerializationRoundTrip = 253 # 
-    ERR=255    # Python error
+class MessageType(enum.IntEnum):
+    """The known message types."""
 
-    MAX_LEN = 2**32-1
+    OK = 0  # Sent as a response indicating success, but returning nothing else.
+    PID = 1  # Initial connection message containing the PID.
+    STOP = 2  # Indicates the desire to break the connection.
+    REPR = 3  # Evaluates an expression and then returns its representation (for debug).
+    EXEC = 4  # Executes statement(s) and returns OK or ERR
+    REPR_RET = 5  # Return from REPR
+    EVAL = 10  # Evaluate a Python expression, including arguments, with APL conversion.
+    EVAL_RET = 11  # Returning the value of an EVAL message.
+    DEBUG_SERIALISATION_ROUNDTRIP = 253
+    ERR = 255  # Python error.
 
-    def __init__(self, mtype, mdata):
-        """Initialize a message"""
-        self.type = mtype
-        self.data = mdata
-        if type(self.data) is str: 
-            self.data = self.data.encode("utf8")
-        if len(self.data) > Message.MAX_LEN:
-            raise ValueError("message body exceeds maximum length")
 
+class Message:
+    """A variable-length message to be sent to/from APL from/to Python.
+
+    The message format is as follows:
+     - the first byte contains the message type, as per the `MessageType` enum;
+     - the 4 bytes that follow contain `size`, the data length in big-endian;
+     - the remainder `size` bytes hold the body of the message.
+    """
+
+    MAX_LEN = 2 ** 32 - 1
+
+    def __init__(self, type_, data):
+        """An instance is created by providing a type and the data.
+
+        The message type must be one of `MessageType` and the `data` can
+        be a string or a bytes object, but both are saved as bytes.
+        """
+
+        if type_ not in MessageType:
+            raise TypeError(f"Message type {type_} unknown.")
+        self.type = type_
+
+        if len(data) > Message.MAX_LEN:
+            raise ValueError("Maximum body length exceeded.")
+        self.data = data.encode("utf8") if isinstance(data, str) else data
 
     def send(self, writer):
         """Send a message using a writer"""
@@ -217,7 +231,7 @@ class Connection(object):
                 # already killed it? (destructor might call this function after the user has called it as well)
                 if not self.pid:
                     return
-                try: Message(Message.STOP, "STOP").send(self.conn.outfile)
+                try: Message(MessageType.STOP, "STOP").send(self.conn.outfile)
                 except (ValueError, AttributeError): pass # if already closed, don't care
                 
                 # close the pipes
@@ -342,10 +356,10 @@ class Connection(object):
 
             Input must be string, the lines of which will be passed to ⎕FX."""
 
-            Message(Message.EXEC, tradfn).send(self.conn.outfile)
-            reply = self.conn.expect(Message.OK)
+            Message(MessageType.EXEC, tradfn).send(self.conn.outfile)
+            reply = self.conn.expect(MessageType.OK)
 
-            if reply.type == Message.ERR:
+            if reply.type == MessageType.ERR:
                 raise APLError(json_obj=str(reply.data,'utf-8'))
             else:
                 return self.fn(str(reply.data,'utf-8'))
@@ -354,10 +368,10 @@ class Connection(object):
             """Run an APL expression, return string representation"""
             
             # send APL message
-            Message(Message.REPR, aplcode).send(self.conn.outfile)
-            reply = self.conn.expect(Message.REPRRET)
+            Message(MessageType.REPR, aplcode).send(self.conn.outfile)
+            reply = self.conn.expect(MessageType.REPR_RET)
 
-            if reply.type == Message.ERR:
+            if reply.type == MessageType.ERR:
                 raise APLError(json_obj=str(reply.data,'utf-8'))
             else:
                 return reply.data
@@ -392,11 +406,11 @@ class Connection(object):
                          .replace('(⋄','(').replace('⋄)',')')
 
             payload = APLArray.from_python([aplexpr, args], apl=self).toJSONString()
-            Message(Message.EVAL, payload).send(self.conn.outfile)
+            Message(MessageType.EVAL, payload).send(self.conn.outfile)
 
-            reply = self.conn.expect(Message.EVALRET)
+            reply = self.conn.expect(MessageType.EVAL_RET)
 
-            if reply.type == Message.ERR:
+            if reply.type == MessageType.ERR:
                 raise APLError(json_obj=reply.data)
 
             answer = APLArray.fromJSONString(reply.data)
@@ -445,9 +459,9 @@ class Connection(object):
         connobj = Connection(inpipe, outpipe, signon=False)
 
         # ask for the PID
-        pidmsg = connobj.expect(Message.PID)
+        pidmsg = connobj.expect(MessageType.PID)
         
-        if pidmsg.type==Message.ERR:
+        if pidmsg.type==MessageType.ERR:
             raise APLError(pidmsg.data)
         else:
             pid=int(pidmsg.data)
@@ -467,7 +481,7 @@ class Connection(object):
         self.apl = Connection.APL(self)
         self.isSlave = False
         if signon:
-            Message(Message.PID, str(os.getpid())).send(self.outfile)
+            Message(MessageType.PID, str(os.getpid())).send(self.outfile)
             self.isSlave = True
 
     def runUntilStop(self):
@@ -500,7 +514,7 @@ class Connection(object):
                 if self.isSlave: s = ignoreInterrupts()
                 msg = Message.recv(self.infile)
 
-                if msg.type in (msgtype, Message.ERR):
+                if msg.type in (msgtype, MessageType.ERR):
                     return msg
                 else:
                     if self.isSlave: allowInterrupts()
@@ -519,34 +533,34 @@ class Connection(object):
             # If there is an interrupt during 'respond', then that means
             # the Python side was interrupted, and we need to tell the
             # APL this.
-            Message(Message.ERR, "Interrupt").send(self.outfile)
+            Message(MessageType.ERR, "Interrupt").send(self.outfile)
 
     def respond_inner(self, message):
         """Respond to a message"""
         
         t = message.type
-        if t==Message.OK:
+        if t==MessageType.OK:
             # return 'OK' to such messages
-            Message(Message.OK, message.data).send(self.outfile)
+            Message(MessageType.OK, message.data).send(self.outfile)
 
-        elif t==Message.PID:
+        elif t==MessageType.PID:
             # this is interpreted as asking for the PID
-            Message(Message.PID, str(os.getpid())).send(self.outfile)
+            Message(MessageType.PID, str(os.getpid())).send(self.outfile)
         
-        elif t==Message.STOP:
+        elif t==MessageType.STOP:
             # send a 'STOP' back in acknowledgement and set the stop flag
             self.stop = True
-            Message(Message.STOP, "STOP").send(self.outfile)
+            Message(MessageType.STOP, "STOP").send(self.outfile)
         
-        elif t==Message.REPR:
+        elif t==MessageType.REPR:
             # evaluate the input and send the Python representation back
             try:
                 val = repr(eval(message.data))
-                Message(Message.REPRRET, val).send(self.outfile)
+                Message(MessageType.REPR_RET, val).send(self.outfile)
             except Exception as e:
-                Message(Message.ERR, repr(e)).send(self.outfile)
+                Message(MessageType.ERR, repr(e)).send(self.outfile)
 
-        elif t==Message.EXEC:
+        elif t==MessageType.EXEC:
             # execute some Python code in the global context
             sig = None
             try:
@@ -557,13 +571,13 @@ class Connection(object):
                     script = str(script, 'utf-8')
 
                 PyEvaluator.executeInContext(script, self.apl)
-                Message(Message.OK, '').send(self.outfile)
+                Message(MessageType.OK, '').send(self.outfile)
             except Exception as e:
-                Message(Message.ERR, repr(e)).send(self.outfile)
+                Message(MessageType.ERR, repr(e)).send(self.outfile)
             finally:
                 setInterrupts(sig)
 
-        elif t==Message.EVAL:
+        elif t==MessageType.EVAL:
             # evaluate a Python expression with optional arguments
             # expected input: APLArray, first elem = expr string, 2nd elem = arguments
             # output, if not an APLArray already, will be automagically converted
@@ -590,15 +604,15 @@ class Connection(object):
                     raise MalformedMessage("Argument list must be rank-1 array.")
 
                 result = PyEvaluator(code, args, self).go().toJSONString()
-                Message(Message.EVALRET, result).send(self.outfile)
+                Message(MessageType.EVAL_RET, result).send(self.outfile)
             except Exception as e:
                 #raise
-                Message(Message.ERR, repr(e)).send(self.outfile)
+                Message(MessageType.ERR, repr(e)).send(self.outfile)
             finally:
                 setInterrupts(sig)
 
 
-        elif t==Message.DBGSerializationRoundTrip:
+        elif t==MessageType.DEBUG_SERIALISATION_ROUNDTRIP:
             # this is a debug message. Deserialize the contents, print them to stdout, reserialize and send back
             try:
                 print("Received data: ", message.data)
@@ -610,9 +624,9 @@ class Connection(object):
                 print("Sending back: ", serialized)
                 print("---------------")
 
-                Message(Message.DBGSerializationRoundTrip, serialized).send(self.outfile)
+                Message(MessageType.DEBUG_SERIALISATION_ROUNDTRIP, serialized).send(self.outfile)
             except Exception as e:
-                Message(Message.ERR, repr(e)).send(self.outfile)          
+                Message(MessageType.ERR, repr(e)).send(self.outfile)          
         else:
-            Message(Message.ERR, "unknown message type #%d / data:%s"%(message.type,message.data)).send(self.outfile)
+            Message(MessageType.ERR, "unknown message type #%d / data:%s"%(message.type,message.data)).send(self.outfile)
 
