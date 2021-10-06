@@ -117,35 +117,30 @@ class Message:
     def send(self, writer):
         """Send a message using a writer"""
 
-        # turn off interrupt signal handler temporarily
-        s = None
-
-        # this fails under Python 3 if it happens during shutdown
-        # the workaround is to just ignore it in that case
-        # the error claims SIG_IGN isn't a valid signal
+        # Turn off interrupt signal handler temporarily;
+        # this fails under Python 3 if it happens during shutdown.
+        # The workaround is to just ignore it in that case
+        # the error claims SIG_IGN isn't a valid signal.
         try:
             s = signal.signal(signal.SIGINT, signal.SIG_IGN)
         except (TypeError, ValueError):
-            pass
+            s = None
 
         try:
-            b4 = (len(self.data) & 0xFF000000) >> 24
-            b3 = (len(self.data) & 0x00FF0000) >> 16
-            b2 = (len(self.data) & 0x0000FF00) >> 8
-            b1 = (len(self.data) & 0x000000FF) >> 0
-            
-            # Python 2 and 3 handle this differently
-            # Annoyingly enough, the newest Python 3 (.6) has added support for this back in,
-            # but we can't expect that version to be present just yet
-            if sys.version_info.major == 2:
-                writer.write(b"%c%c%c%c%c%s" % (self.type,b4,b3,b2,b1,self.data))
-            else:
-                writer.write(bytes([self.type,b4,b3,b2,b1]))
-                writer.write(self.data)
-            
+            header = bytes([
+                self.type,
+                (len(self.data) & 0xFF000000) >> 24,
+                (len(self.data) & 0x00FF0000) >> 16,
+                (len(self.data) & 0x0000FF00) >> 8,
+                (len(self.data) & 0x000000FF) >> 0,
+            ])
+
+            writer.write(header)
+            writer.write(self.data)
             writer.flush()
         finally:
-            if s: signal.signal(signal.SIGINT, s) 
+            if s:
+                signal.signal(signal.SIGINT, s)
 
     @staticmethod
     def recv(reader,block=True):
@@ -175,7 +170,7 @@ class Message:
 
             # read the header
             try:
-                mtype = ord(reader.read(1))
+                mtype = MessageType(ord(reader.read(1)))
                 lfield = reader.read(4)
                 length = (lfield[0]<<24) + (lfield[1]<<16) + (lfield[2]<<8) + lfield[3]
             except (TypeError, IndexError, ValueError):
