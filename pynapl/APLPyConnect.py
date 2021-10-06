@@ -20,40 +20,55 @@ from .PyEvaluator import PyEvaluator
 from .ObjectWrapper import ObjectStore, ObjectWrapper
 
 
-# these fail when threaded, but that's OK
+# These fail when threaded, but that's OK
 def ignoreInterrupts():
-    try: return signal.signal(signal.SIGINT, signal.SIG_IGN)
-    except ValueError: return None # (not on main thread)
+    try:
+        return signal.signal(signal.SIGINT, signal.SIG_IGN)
+    except ValueError:
+        pass
+
 
 def allowInterrupts():
-    try: return signal.signal(signal.SIGINT, signal.default_int_handler)
-    except ValueError: return None # pass (not on main thread)
+    try:
+        return signal.signal(signal.SIGINT, signal.default_int_handler)
+    except ValueError:
+        pass
+
 
 def setInterrupts(x):
-    if x==None: return None
-    try: return signal.signal(signal.SIGINT, x)
-    except ValueError: return None # pass (not on main thread)
-    
+    if x is None:
+        return
 
-class APLError(Exception): 
-    def __init__(self, message="", jsobj=None):
+    try:
+        return signal.signal(signal.SIGINT, x)
+    except ValueError:
+        pass
+
+
+class APLError(Exception):
+    """Encapsulate an APL error message."""
+
+    def __init__(self, message="", json_obj=None):
         self.dmx = None
-        # if a JSON object is given, use that
-        if not jsobj is None:
-            if type(jsobj) is bytes: jsobj=str(jsobj, 'utf-8')
-            errobj = json.loads(jsobj)
-            message = errobj['Message']
-            if 'DMX' in errobj:
-                self.dmx = errobj['DMX']
-                if 'Message' in self.dmx and self.dmx['Message'].strip():
-                    message += ': ' + self.dmx['Message']
 
-        
-        # if on Python 3 and these are bytes, convert to unicode
-        if sys.version_info.major >= 3 and type(message) is bytes:
-            Exception.__init__(self, str(message, 'utf-8'))
-        else:
-            Exception.__init__(self, message)
+        # If a JSON object is given, build the `message` from it.
+        if json_obj is not None:
+            if isinstance(json_obj, bytes):
+                json_obj = json_obj.decode("utf-8")
+            error_obj = json.loads(json_obj)
+            message = error_obj["Message"]
+            # Try giving more information about the error by inspecting DMX.
+            self.dmx = error_obj.get("DMX", {})
+            dmx_message = self.dmx.get("Message", "")
+            if dmx_message:
+                message += ": " + dmx_message
+
+        if isinstance(message, bytes):
+            # `message` might need decoding if it comes directly from the APL interface.
+            message = message.decode("utf-8")
+
+        super().__init__(message)
+
 
 class MalformedMessage(Exception): pass
 
@@ -331,7 +346,7 @@ class Connection(object):
             reply = self.conn.expect(Message.OK)
 
             if reply.type == Message.ERR:
-                raise APLError(jsobj=str(reply.data,'utf-8'))
+                raise APLError(json_obj=str(reply.data,'utf-8'))
             else:
                 return self.fn(str(reply.data,'utf-8'))
 
@@ -343,7 +358,7 @@ class Connection(object):
             reply = self.conn.expect(Message.REPRRET)
 
             if reply.type == Message.ERR:
-                raise APLError(jsobj=str(reply.data,'utf-8'))
+                raise APLError(json_obj=str(reply.data,'utf-8'))
             else:
                 return reply.data
 
@@ -382,7 +397,7 @@ class Connection(object):
             reply = self.conn.expect(Message.EVALRET)
 
             if reply.type == Message.ERR:
-                raise APLError(jsobj=reply.data)
+                raise APLError(json_obj=reply.data)
 
             answer = APLArray.fromJSONString(reply.data)
 
