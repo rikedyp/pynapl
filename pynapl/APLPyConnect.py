@@ -1,7 +1,6 @@
-# APLPyConnect
-# -*- coding: utf-8 -*-
-
-# This module handles the passing of messages between the APL side and the Python side
+"""
+This module handles the passing of messages between the APL side and the Python side.
+"""
 
 # The format of a message is:
 #   0     1  2  3  4         ......
@@ -14,10 +13,11 @@ import signal
 import sys
 import time
 import types
+
 from . import RunDyalog, Interrupt, WinDyalog, IPC
-from .Array import *
+from .Array import APLArray
 from .PyEvaluator import PyEvaluator
-from .ObjectWrapper import *
+from .ObjectWrapper import ObjectStore, ObjectWrapper
 
 
 # in Python 2, sockets give bytes as ASCII characters.
