@@ -3,16 +3,25 @@
 # This program will connect to the APL side,
 # after which it will execute commands given to it.
 
+import pathlib
 import os
 import signal
 import sys
 import threading
 
-from . import APLPyConnect
-from . import IPC
-
 # Allow users to import things from the cwd, just like in a normal interactive session.
 sys.path.insert(1, "")
+
+# Make a distinction when this code is ran directly from Python or when called by APL.
+# Proper packaging and installing will likely remove the need for the two alternatives.
+try:
+    from . import APLPyConnect
+    from . import IPC
+except ImportError:
+    # Make sure Python can find the imports when not ran from the package directory.
+    sys.path.insert(1, str(pathlib.Path(__file__).parent.parent))
+    from pynapl import APLPyConnect
+    from pynapl import IPC
 
 
 def runSlave(inp, outp):
