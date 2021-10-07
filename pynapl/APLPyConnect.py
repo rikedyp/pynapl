@@ -16,6 +16,7 @@ from . import RunDyalog, Interrupt, WinDyalog, IPC
 from .Array import APLArray
 from .PyEvaluator import PyEvaluator
 from .ObjectWrapper import ObjectStore, ObjectWrapper
+from .Util import NoInterruptSignal
 
 
 # These fail when threaded, but that's OK
@@ -114,6 +115,37 @@ class Message:
             raise ValueError("Maximum body length exceeded.")
         self.data = data.encode("utf8") if isinstance(data, str) else data
 
+    @classmethod
+    def recv(cls, reader, block=True):
+        """Create a message from a reader.
+
+        `block` determines whether or not we should wait for the `reader`,
+        or if we return `None` if no message is available.
+        """
+
+        while not reader.avail(0.1):
+            if not block:
+                return None
+
+        with NoInterruptSignal():
+            # Once we've started reading, make sure we finish reading.
+            try:
+                message_type = MessageType(ord(reader.read(1)))
+                b1, b2, b3, b4 = reader.read(4)
+                length = (b1 << 24) + (b2 << 16) + (b3 << 8) + b4
+            except (TypeError, IndexError, ValueError):
+                raise MalformedMessage("Could not read message header.")
+
+            try:
+                data = reader.read(length)
+            except ValueError:
+                raise MalformedMessage("Ran out of data while reading message.")
+
+            if len(data) != length:
+                raise MalformedMessage("Ran out of data while reading message.")
+
+        return cls(message_type, data)
+
     def send(self, writer):
         """Send a message using a writer"""
 
@@ -142,56 +174,6 @@ class Message:
             if s:
                 signal.signal(signal.SIGINT, s)
 
-    @staticmethod
-    def recv(reader,block=True):
-        """Read a message from a reader.
-        
-        If block is set to False, then it will return None if no message is
-        available, rather than wait until one comes in.
-        """
-
-        s = None
-        setsgn = False
-        
-        try:
-            if block:
-                # wait for message available
-                while True:
-                    if reader.avail(0.1): break
-            else:
-                # if no message available, return None
-                if not reader.avail(0.1): return None
-
-                # once we've started reading, finish reading: turn off the interrupt handler
-            try:
-                s, setsgn = signal.signal(signal.SIGINT, signal.SIG_IGN), True
-            except ValueError:
-                pass # we're not on the main thread, so no signaling at all
-
-            # read the header
-            try:
-                mtype = MessageType(ord(reader.read(1)))
-                lfield = reader.read(4)
-                length = (lfield[0]<<24) + (lfield[1]<<16) + (lfield[2]<<8) + lfield[3]
-            except (TypeError, IndexError, ValueError):
-                raise MalformedMessage("out of data while reading message header")
-
-            # read the data
-            try:
-                data = reader.read(length)
-            except ValueError:
-                raise MalformedMessage("out of data while reading message body")
-
-            if len(data) != length:
-                raise MalformedMessage("out of data while reading message body")
-
-            return Message(mtype, data)
-        finally:
-            # turn the interrupt handler back on if we'd turned it off
-            if setsgn:
-                signal.signal(signal.SIGINT, s)
-
-        
 
 class Connection(object):
     """A connection"""
