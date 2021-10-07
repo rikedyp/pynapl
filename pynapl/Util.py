@@ -8,6 +8,7 @@ from functools import reduce
 
 
 import operator
+import signal
 
 def product(seq):
     """The product of a sequence of numbers"""
@@ -31,3 +32,17 @@ def extend(arr,length):
             r.extend(arr[:length-len(r)])
         return r
 
+
+class NoInterruptSignal:
+    def __enter__(self):
+        try:
+            self.SIGINT_handler = signal.signal(signal.SIGINT, signal.SIG_IGN)
+            self.in_main_thread = True
+        except ValueError:
+            self.in_main_thread = False
+
+    def __exit__(self, *args):
+        if self.in_main_thread:
+            signal.signal(signal.SIGINT, self.SIGINT_handler)
+
+        return False  # Make sure errors propagate outside the context manager.
