@@ -173,228 +173,227 @@ class Message:
                 signal.signal(signal.SIGINT, s)
 
 
-class Connection(object):
-    """A connection"""
+class APL:
+    """Represent the APL interpreter (session) inside Python."""
 
-    class APL(object):
-        """Represents the APL interpreter."""
+    def __init__(self, conn):
+        self.store = ObjectStore()
+        self.conn = conn
+        # Keep track of how many operators have been defined, for name-mangling purposes.
+        self.ops = 0
+        self.pid = None
+        self.DEBUG = False
 
-        pid=None
-        DEBUG=False
-        store=None
+    def obj(self, obj):
+        """Wrap an object so it can be sent to APL."""
+        return ObjectWrapper(self.store, obj)
 
-        def __init__(self, conn):
-            self.store = ObjectStore()
-            self.conn=conn
-            self.ops=0 # keeps track of how many operators have been defined
+    def _access(self, ref):
+        """Called by the APL side to access a Python object"""
+        return self.store.retrieve(ref)
 
-        def obj(self, obj):
-            """Wrap an object so it can be sent to APL."""
-            return ObjectWrapper(self.store, obj) 
-   
-        def _access(self, ref):
-            """Called by the APL side to access a Python object"""
-            return self.store.retrieve(ref)
+    def _release(self, ref):
+        """Called by the APL side to release an object it has sent."""
+        self.store.release(ref)
 
-        def _release(self, ref):
-            """Called by the APL side to release an object it has sent."""
-            self.store.release(ref)
-
-        def stop(self):
-            """If the connection was initiated from the Python side, this will close it."""
-            if not self.pid is None:
-                # already killed it? (destructor might call this function after the user has called it as well)
-                if not self.pid:
-                    return
-                try: Message(MessageType.STOP, "STOP").send(self.conn.outfile)
-                except (ValueError, AttributeError): pass # if already closed, don't care
-                
-                # close the pipes
-                try:
-                    self.conn.infile.close()
-                    self.conn.outfile.close()
-                except:
-                    pass # we're gone anyway
-
-                # give the APL process half a second to exit cleanly
-                time.sleep(.5)
-                
-         
-                if not self.DEBUG:
-                    try: os.kill(self.pid, 15) # SIGTERM
-                    except OSError: pass # just leak the instance, it will be cleaned up once Python exits
-                
-                self.pid=0
-
-            else: 
-                raise ValueError("Connection was not started from the Python end.")
-
-        def __del__(self):
-            if self.pid: self.stop()
-
-        def fn(self, aplfn, raw=False):
-            """Expose an APL function to Python.
-
-            The result will be considered niladic if called with no arguments,
-            monadic if called with one and dyadic if called with two.
+    def stop(self):
+        """If the connection was initiated from the Python side, this will close it."""
+        if not self.pid is None:
+            # already killed it? (destructor might call this function after the user has called it as well)
+            if not self.pid:
+                return
+            try: Message(MessageType.STOP, "STOP").send(self.conn.outfile)
+            except (ValueError, AttributeError): pass # if already closed, don't care
             
-            If "raw" is set, the return value will be given as an APLArray rather
-            than be converted to a 'suitable' Python representation.
-            """
+            # close the pipes
+            try:
+                self.conn.infile.close()
+                self.conn.outfile.close()
+            except:
+                pass # we're gone anyway
 
-            if not type(aplfn) is str:
-                aplfn = str(aplfn, "utf-8")
+            # give the APL process half a second to exit cleanly
+            time.sleep(.5)
+            
+        
+            if not self.DEBUG:
+                try: os.kill(self.pid, 15) # SIGTERM
+                except OSError: pass # just leak the instance, it will be cleaned up once Python exits
+            
+            self.pid=0
 
+        else: 
+            raise ValueError("Connection was not started from the Python end.")
+
+    def __del__(self):
+        if self.pid: self.stop()
+
+    def fn(self, aplfn, raw=False):
+        """Expose an APL function to Python.
+
+        The result will be considered niladic if called with no arguments,
+        monadic if called with one and dyadic if called with two.
+        
+        If "raw" is set, the return value will be given as an APLArray rather
+        than be converted to a 'suitable' Python representation.
+        """
+
+        if not type(aplfn) is str:
+            aplfn = str(aplfn, "utf-8")
+
+        def __fn(*args):
+            if len(args)==0: return self.eval(aplfn, raw=raw)
+            if len(args)==1: return self.eval("(%s)⊃∆"%aplfn, args[0], raw=raw)
+            if len(args)==2: return self.eval("(⊃∆)(%s)2⊃∆"%aplfn, args[0], args[1], raw=raw)
+            return APLError("Function must be niladic, monadic or dyadic.")
+
+        # op can use this for an optimization
+        __fn.aplfn = aplfn
+
+        return __fn
+
+    def op(self, aplop):
+        """Expose an APL operator.
+
+        It can be called with either 1 or 2 arguments, depending on whether the
+        operator is monadic or dyadic. The arguments may be values or Python
+        functions.
+
+        If the Python function was created using apl.fn, this is recognized
+        and the function is run in APL directly.
+        """
+
+        if not type(aplop) is str:
+            aplop = str(aplop, "utf-8")
+
+        def storeArgInWs(arg,nm):
+            wsname = "___op%d_%s" % (self.ops, nm)
+
+            if type(arg) is types.FunctionType \
+            or type(arg) is types.BuiltinFunctionType:
+                # it is a function
+                if hasattr(arg,'__dict__') and 'aplfn' in arg.__dict__:
+                    # it is an APL function
+                    self.eval("%s ← %s⋄⍬" % (wsname, arg.aplfn))
+                else:
+                    # it is a Python function
+                    # store it under this name
+                    self.__dict__[wsname] = arg
+                    # make it available to APL
+                    self.eval("%s ← (py.PyFn'APL.%s').Call⋄⍬" % (wsname, wsname))
+            else:
+                # it is a value
+                self.eval("%s ← ⊃∆" % wsname, arg) 
+            return wsname
+
+        def __op(aa, ww=None, raw=False):
+            
+
+            # store the arguments into APL at the time that the operator is defined
+            wsaa = storeArgInWs(aa, "aa")
+            
+            aplfn = "((%s)(%s))" % (wsaa, aplop)
+
+            # . / ∘. must be special-cased
+            if aplop in [".","∘."]: aplfn='(∘.(%s))' % wsaa
+
+            if not ww is None: 
+                wsww = storeArgInWs(ww, "ww")
+                aplfn = "((%s)%s(%s))" % (wsaa, aplop, wsww)
+                # again, . / ∘. must be special-cased
+                if aplop in [".","∘."]: aplfn='((%s).(%s))' % (wsaa, wsww)
+            
             def __fn(*args):
-                if len(args)==0: return self.eval(aplfn, raw=raw)
+                # an APL operator can't return a niladic function
+                if len(args)==0: raise APLError("A function derived from an APL operator cannot be niladic.")
                 if len(args)==1: return self.eval("(%s)⊃∆"%aplfn, args[0], raw=raw)
                 if len(args)==2: return self.eval("(⊃∆)(%s)2⊃∆"%aplfn, args[0], args[1], raw=raw)
-                return APLError("Function must be niladic, monadic or dyadic.")
+                raise APLError("Function must be monadic or dyadic.")
 
-            # op can use this for an optimization
             __fn.aplfn = aplfn
-
+            self.ops+=1
             return __fn
+        
 
-        def op(self, aplop):
-            """Expose an APL operator.
+        return __op
 
-            It can be called with either 1 or 2 arguments, depending on whether the
-            operator is monadic or dyadic. The arguments may be values or Python
-            functions.
+    def interrupt(self):
+        """Send a strong interrupt to the Dyalog interpreter."""
+        if self.pid:
+            Interrupt.interrupt(self.pid)
 
-            If the Python function was created using apl.fn, this is recognized
-            and the function is run in APL directly.
-            """
+    def tradfn(self, tradfn):
+        """Define a tradfn or tradop on the APL side.
 
-            if not type(aplop) is str:
-                aplop = str(aplop, "utf-8")
+        Input must be string, the lines of which will be passed to ⎕FX."""
 
-            def storeArgInWs(arg,nm):
-                wsname = "___op%d_%s" % (self.ops, nm)
+        Message(MessageType.EXEC, tradfn).send(self.conn.outfile)
+        reply = self.conn.expect(MessageType.OK)
 
-                if type(arg) is types.FunctionType \
-                or type(arg) is types.BuiltinFunctionType:
-                    # it is a function
-                    if hasattr(arg,'__dict__') and 'aplfn' in arg.__dict__:
-                        # it is an APL function
-                        self.eval("%s ← %s⋄⍬" % (wsname, arg.aplfn))
-                    else:
-                        # it is a Python function
-                        # store it under this name
-                        self.__dict__[wsname] = arg
-                        # make it available to APL
-                        self.eval("%s ← (py.PyFn'APL.%s').Call⋄⍬" % (wsname, wsname))
-                else:
-                    # it is a value
-                    self.eval("%s ← ⊃∆" % wsname, arg) 
-                return wsname
+        if reply.type == MessageType.ERR:
+            raise APLError(json_obj=str(reply.data,'utf-8'))
+        else:
+            return self.fn(str(reply.data,'utf-8'))
 
-            def __op(aa, ww=None, raw=False):
-               
+    def repr(self, aplcode):
+        """Run an APL expression, return string representation"""
+        
+        # send APL message
+        Message(MessageType.REPR, aplcode).send(self.conn.outfile)
+        reply = self.conn.expect(MessageType.REPR_RET)
 
-                # store the arguments into APL at the time that the operator is defined
-                wsaa = storeArgInWs(aa, "aa")
-               
-                aplfn = "((%s)(%s))" % (wsaa, aplop)
+        if reply.type == MessageType.ERR:
+            raise APLError(json_obj=str(reply.data,'utf-8'))
+        else:
+            return reply.data
 
-                # . / ∘. must be special-cased
-                if aplop in [".","∘."]: aplfn='(∘.(%s))' % wsaa
+    def fix(self, code):
+        """2⎕FIX an APL script. It will become available in the workspace.
+            Input may be a string or a list."""
 
-                if not ww is None: 
-                    wsww = storeArgInWs(ww, "ww")
-                    aplfn = "((%s)%s(%s))" % (wsaa, aplop, wsww)
-                    # again, . / ∘. must be special-cased
-                    if aplop in [".","∘."]: aplfn='((%s).(%s))' % (wsaa, wsww)
-                
-                def __fn(*args):
-                    # an APL operator can't return a niladic function
-                    if len(args)==0: raise APLError("A function derived from an APL operator cannot be niladic.")
-                    if len(args)==1: return self.eval("(%s)⊃∆"%aplfn, args[0], raw=raw)
-                    if len(args)==2: return self.eval("(⊃∆)(%s)2⊃∆"%aplfn, args[0], args[1], raw=raw)
-                    raise APLError("Function must be monadic or dyadic.")
+        # implemented using eval 
+        if not type(code) is str: 
+            code = str(code, 'utf-8')
 
-                __fn.aplfn = aplfn
-                self.ops+=1
-                return __fn
+        if not type(code) is list:
+            code = code.split("\n") # luckily APL has no multiline strings
+        
+        return self.eval("2⎕FIX ∆", *code)
             
+    def eval(self, aplexpr, *args, **kwargs):
+        """Evaluate an APL expression. Any extra arguments will be exposed
+            as an array ∆. If `raw' is set, the result is not converted to a
+            Python representation."""
+        
+        if not type(aplexpr) is str:
+            # this should be an UTF-8 string
+            aplexpr=str(aplexpr, "utf8")
 
-            return __op
+        # normalize (remove superfluous whitespace and newlines, add in ⋄s where
+        # necessary)
 
-        def interrupt(self):
-            """Send a strong interrupt to the Dyalog interpreter."""
-            if self.pid:
-                Interrupt.interrupt(self.pid)
+        aplexpr = '⋄'.join(x.strip() for x in aplexpr.split("\n") if x.strip()) \
+                        .replace('{⋄','{').replace('⋄}','}') \
+                        .replace('(⋄','(').replace('⋄)',')')
 
-        def tradfn(self, tradfn):
-            """Define a tradfn or tradop on the APL side.
+        payload = APLArray.from_python([aplexpr, args], apl=self).toJSONString()
+        Message(MessageType.EVAL, payload).send(self.conn.outfile)
 
-            Input must be string, the lines of which will be passed to ⎕FX."""
+        reply = self.conn.expect(MessageType.EVAL_RET)
 
-            Message(MessageType.EXEC, tradfn).send(self.conn.outfile)
-            reply = self.conn.expect(MessageType.OK)
+        if reply.type == MessageType.ERR:
+            raise APLError(json_obj=reply.data)
 
-            if reply.type == MessageType.ERR:
-                raise APLError(json_obj=str(reply.data,'utf-8'))
-            else:
-                return self.fn(str(reply.data,'utf-8'))
+        answer = APLArray.fromJSONString(reply.data)
 
-        def repr(self, aplcode):
-            """Run an APL expression, return string representation"""
-            
-            # send APL message
-            Message(MessageType.REPR, aplcode).send(self.conn.outfile)
-            reply = self.conn.expect(MessageType.REPR_RET)
+        if 'raw' in kwargs and kwargs['raw']:
+            return answer
+        else:
+            return answer.to_python(self)
 
-            if reply.type == MessageType.ERR:
-                raise APLError(json_obj=str(reply.data,'utf-8'))
-            else:
-                return reply.data
 
-        def fix(self, code):
-            """2⎕FIX an APL script. It will become available in the workspace.
-               Input may be a string or a list."""
-
-            # implemented using eval 
-            if not type(code) is str: 
-                code = str(code, 'utf-8')
-
-            if not type(code) is list:
-                code = code.split("\n") # luckily APL has no multiline strings
-            
-            return self.eval("2⎕FIX ∆", *code)
-                
-        def eval(self, aplexpr, *args, **kwargs):
-            """Evaluate an APL expression. Any extra arguments will be exposed
-               as an array ∆. If `raw' is set, the result is not converted to a
-               Python representation."""
-           
-            if not type(aplexpr) is str:
-                # this should be an UTF-8 string
-                aplexpr=str(aplexpr, "utf8")
-
-            # normalize (remove superfluous whitespace and newlines, add in ⋄s where
-            # necessary)
-
-            aplexpr = '⋄'.join(x.strip() for x in aplexpr.split("\n") if x.strip()) \
-                         .replace('{⋄','{').replace('⋄}','}') \
-                         .replace('(⋄','(').replace('⋄)',')')
-
-            payload = APLArray.from_python([aplexpr, args], apl=self).toJSONString()
-            Message(MessageType.EVAL, payload).send(self.conn.outfile)
-
-            reply = self.conn.expect(MessageType.EVAL_RET)
-
-            if reply.type == MessageType.ERR:
-                raise APLError(json_obj=reply.data)
-
-            answer = APLArray.fromJSONString(reply.data)
-
-            if 'raw' in kwargs and kwargs['raw']:
-                return answer
-            else:
-                return answer.to_python(self)
-
+class Connection:
+    """A connection"""
     @staticmethod
     def APLClient(DEBUG=False, dyalog=None, forceTCP=False):
         """Start an APL client. This function returns an APL instance."""
@@ -453,7 +452,7 @@ class Connection(object):
     def __init__(self, infile, outfile, signon=True):
         self.infile = infile
         self.outfile = outfile
-        self.apl = Connection.APL(self)
+        self.apl = APL(self)
         self.is_slave = False
         if signon:
             Message(MessageType.PID, str(os.getpid())).send(self.outfile)
@@ -486,18 +485,18 @@ class Connection(object):
             s = None
             try:
                 # only turn off interrupts if the APL side is in control
-                if self.isSlave: s = ignoreInterrupts()
+                if self.is_slave: s = ignoreInterrupts()
                 msg = Message.recv(self.infile)
 
                 if msg.type in (msgtype, MessageType.ERR):
                     return msg
                 else:
-                    if self.isSlave: allowInterrupts()
+                    if self.is_slave: allowInterrupts()
                     self.respond(msg)
             except KeyboardInterrupt:
                 self.apl.interrupt()
             finally:
-                if self.isSlave: setInterrupts(s)
+                if self.is_slave: setInterrupts(s)
                 pass
 
     def respond(self, message):
