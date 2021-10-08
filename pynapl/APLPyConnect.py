@@ -8,7 +8,6 @@ import json
 import os
 import platform
 import signal
-import sys
 import time
 import types
 
@@ -34,12 +33,11 @@ def allowInterrupts():
         pass
 
 
-def setInterrupts(x):
-    if x is None:
+def setInterrupts(handler):
+    if handler is None:
         return
-
     try:
-        return signal.signal(signal.SIGINT, x)
+        return signal.signal(signal.SIGINT, handler)
     except ValueError:
         pass
 
@@ -453,13 +451,13 @@ class Connection(object):
             return apl
 
     def __init__(self, infile, outfile, signon=True):
-        self.infile=infile
-        self.outfile=outfile
+        self.infile = infile
+        self.outfile = outfile
         self.apl = Connection.APL(self)
-        self.isSlave = False
+        self.is_slave = False
         if signon:
             Message(MessageType.PID, str(os.getpid())).send(self.outfile)
-            self.isSlave = True
+            self.is_slave = True
 
     def runUntilStop(self):
         """Receive messages and respond to them until STOP is received.
