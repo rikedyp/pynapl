@@ -184,17 +184,9 @@ class APL:
         self.pid = None
         self.DEBUG = False
 
-    def obj(self, obj):
-        """Wrap an object so it can be sent to APL."""
-        return ObjectWrapper(self.store, obj)
-
-    def _access(self, ref):
-        """Called by the APL side to access a Python object"""
-        return self.store.retrieve(ref)
-
-    def _release(self, ref):
-        """Called by the APL side to release an object it has sent."""
-        self.store.release(ref)
+    def __del__(self):
+        if self.pid:
+            self.stop()
 
     def stop(self):
         """If the connection was initiated from the Python side, this will close it."""
@@ -204,7 +196,7 @@ class APL:
                 return
             try: Message(MessageType.STOP, "STOP").send(self.conn.outfile)
             except (ValueError, AttributeError): pass # if already closed, don't care
-            
+
             # close the pipes
             try:
                 self.conn.infile.close()
@@ -214,26 +206,39 @@ class APL:
 
             # give the APL process half a second to exit cleanly
             time.sleep(.5)
-            
-        
+
             if not self.DEBUG:
                 try: os.kill(self.pid, 15) # SIGTERM
                 except OSError: pass # just leak the instance, it will be cleaned up once Python exits
-            
+
             self.pid=0
 
         else: 
             raise ValueError("Connection was not started from the Python end.")
 
-    def __del__(self):
-        if self.pid: self.stop()
+    def obj(self, obj):
+        """Wrap an object so it can be sent to APL."""
+        return ObjectWrapper(self.store, obj)
+
+    def _access(self, ref):
+        """Called by the APL side to access a Python object."""
+        return self.store.retrieve(ref)
+
+    def _release(self, ref):
+        """Called by the APL side to release an object it has sent."""
+        self.store.release(ref)
+
+    def interrupt(self):
+        """Send a strong interrupt to the Dyalog interpreter."""
+        if self.pid:
+            Interrupt.interrupt(self.pid)
 
     def fn(self, aplfn, raw=False):
         """Expose an APL function to Python.
 
         The result will be considered niladic if called with no arguments,
         monadic if called with one and dyadic if called with two.
-        
+
         If "raw" is set, the return value will be given as an APLArray rather
         than be converted to a 'suitable' Python representation.
         """
@@ -287,11 +292,9 @@ class APL:
             return wsname
 
         def __op(aa, ww=None, raw=False):
-            
-
             # store the arguments into APL at the time that the operator is defined
             wsaa = storeArgInWs(aa, "aa")
-            
+
             aplfn = "((%s)(%s))" % (wsaa, aplop)
 
             # . / ∘. must be special-cased
@@ -302,7 +305,7 @@ class APL:
                 aplfn = "((%s)%s(%s))" % (wsaa, aplop, wsww)
                 # again, . / ∘. must be special-cased
                 if aplop in [".","∘."]: aplfn='((%s).(%s))' % (wsaa, wsww)
-            
+
             def __fn(*args):
                 # an APL operator can't return a niladic function
                 if len(args)==0: raise APLError("A function derived from an APL operator cannot be niladic.")
@@ -313,14 +316,8 @@ class APL:
             __fn.aplfn = aplfn
             self.ops+=1
             return __fn
-        
 
         return __op
-
-    def interrupt(self):
-        """Send a strong interrupt to the Dyalog interpreter."""
-        if self.pid:
-            Interrupt.interrupt(self.pid)
 
     def tradfn(self, tradfn):
         """Define a tradfn or tradop on the APL side.
@@ -337,7 +334,7 @@ class APL:
 
     def repr(self, aplcode):
         """Run an APL expression, return string representation"""
-        
+
         # send APL message
         Message(MessageType.REPR, aplcode).send(self.conn.outfile)
         reply = self.conn.expect(MessageType.REPR_RET)
@@ -357,14 +354,14 @@ class APL:
 
         if not type(code) is list:
             code = code.split("\n") # luckily APL has no multiline strings
-        
+
         return self.eval("2⎕FIX ∆", *code)
-            
+
     def eval(self, aplexpr, *args, **kwargs):
         """Evaluate an APL expression. Any extra arguments will be exposed
             as an array ∆. If `raw' is set, the result is not converted to a
             Python representation."""
-        
+
         if not type(aplexpr) is str:
             # this should be an UTF-8 string
             aplexpr=str(aplexpr, "utf8")
