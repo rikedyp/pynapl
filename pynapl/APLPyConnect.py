@@ -189,32 +189,38 @@ class APL:
             self.stop()
 
     def stop(self):
-        """If the connection was initiated from the Python side, this will close it."""
-        if not self.pid is None:
-            # already killed it? (destructor might call this function after the user has called it as well)
-            if not self.pid:
-                return
-            try: Message(MessageType.STOP, "STOP").send(self.conn.outfile)
-            except (ValueError, AttributeError): pass # if already closed, don't care
+        """Close the connection if it was initiated from the Python side.
 
-            # close the pipes
-            try:
-                self.conn.infile.close()
-                self.conn.outfile.close()
-            except:
-                pass # we're gone anyway
+        This raises a `ValueError` if the connection was opened from the APL side.
+        """
 
-            # give the APL process half a second to exit cleanly
-            time.sleep(.5)
-
-            if not self.DEBUG:
-                try: os.kill(self.pid, 15) # SIGTERM
-                except OSError: pass # just leak the instance, it will be cleaned up once Python exits
-
-            self.pid=0
-
-        else: 
+        if self.pid is None:
             raise ValueError("Connection was not started from the Python end.")
+        elif not self.pid:
+            return  # Only kill if there's a valid PID.
+
+        try:
+            Message(MessageType.STOP, "STOP").send(self.conn.outfile)
+        except (ValueError, AttributeError):
+            pass  # If already closed, don't care.
+
+        # Close the pipes.
+        try:
+            self.conn.infile.close()
+            self.conn.outfile.close()
+        except:
+            pass  # we're gone anyway
+
+        # give the APL process half a second to exit cleanly
+        time.sleep(.5)
+
+        if not self.DEBUG:
+            try:
+                os.kill(self.pid, 15)  # SIGTERM
+            except OSError:
+                pass  # just leak the instance, it will be cleaned up once Python exits
+
+        self.pid = 0
 
     def obj(self, obj):
         """Wrap an object so it can be sent to APL."""
