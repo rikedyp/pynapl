@@ -33,14 +33,15 @@ def runSlave(inp: str, outp: str):
 
     if inp.lower() == 'tcp':
         # then 'outp' is a port number, connect to it.
-        infile = outfile = sock = IPC.TCPIO()
+        sock = IPC.TCPIO()
         sock.connect('localhost', int(outp))
+        conn = APLPyConnect.Connection(infile=sock, outfile=sock)
     else:
-        infile, outfile = IPC.FIFO(inp), IPC.FIFO(outp)
+        infile, outfile = IPC.UnixFIFO(inp), IPC.UnixFIFO(outp)
         infile.openRead()
         outfile.openWrite()
+        conn = APLPyConnect.Connection(infile=infile, outfile=outfile)
 
-    conn = APLPyConnect.Connection(infile=infile, outfile=outfile)
     print("Connected.")
     conn.runUntilStop()
     sys.exit(0)
