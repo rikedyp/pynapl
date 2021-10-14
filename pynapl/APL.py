@@ -1,26 +1,26 @@
 """Dyalog APL <> Python interface"""
 
-from . import APLPyConnect
 from . import IPC
+from . import APLPyConnect as C
 
 import threading
 
 
-def APL(debug=False, dyalog=None, forceTCP=False):
+def APL(debug: bool = False, dyalog: str = None, forceTCP: bool = False) -> C.APL:
     """Start an APL interpreter
 
     If `dyalog_path` is set, this is taken to be the path to the Dyalog interpreter.
     If it is not, a suitable Dyalog APL interpreter will be searched for on the
     path (on Unix/Linux) or in the registry (on Windows).
     """
-    return APLPyConnect.Connection.APLClient(
+    return C.Connection.APLClient(
         DEBUG=debug,
         dyalog=dyalog,
         forceTCP=forceTCP,
     )
 
 
-def client(inp, outp, threaded=True):
+def client(inp: str, outp: str, threaded: bool = True):
     """Allow an APL interpreter to connect to the running Python instance.
 
     This is probably only useful for interactive sessions, as the APL instance
@@ -42,7 +42,7 @@ def client(inp, outp, threaded=True):
             infile.openRead()
             outfile.openWrite()
 
-        conn = APLPyConnect.Connection(infile=infile, outfile=outfile)
+        conn = C.APLPyConnect.Connection(infile=infile, outfile=outfile)
         conn.runUntilStop()
 
     if threaded:
