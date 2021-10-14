@@ -24,7 +24,7 @@ except ImportError:
     from pynapl import IPC
 
 
-def runSlave(inp, outp):
+def runSlave(inp: str, outp: str):
     print("Opening input file...")
 
     # Open the input first, then the output. APL does it in the same order
