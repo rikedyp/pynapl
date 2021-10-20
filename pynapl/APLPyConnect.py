@@ -11,8 +11,11 @@ import signal
 import time
 import types
 
-from . import RunDyalog, Interrupt, WinDyalog, IPC
+from typing import Union
+
+from . import RunDyalog, Interrupt, WinDyalog
 from .Array import APLArray
+from .IPC import FIFOBaseClass, TCPIO, UnixFIFO
 from .PyEvaluator import PyEvaluator
 from .ObjectWrapper import ObjectStore, ObjectWrapper
 from .Util import NoInterruptSignal
@@ -45,7 +48,7 @@ def setInterrupts(handler):
 class APLError(Exception):
     """Encapsulate an APL error message."""
 
-    def __init__(self, message="", json_obj=None):
+    def __init__(self, message: str = "", json_obj: str = None):
         self.dmx = None
 
         # If a JSON object is given, build the `message` from it.
@@ -98,7 +101,7 @@ class Message:
 
     MAX_LEN = 2 ** 32 - 1
 
-    def __init__(self, type_, data):
+    def __init__(self, type_: MessageType, data: str):
         """An instance is created by providing a type and the data.
 
         The message type must be one of `MessageType` and the `data` can
@@ -114,7 +117,7 @@ class Message:
         self.data = data.encode("utf8") if isinstance(data, str) else data
 
     @classmethod
-    def recv(cls, reader, block=True):
+    def recv(cls, reader: FIFOBaseClass, block: bool = True) -> Union["Message", None]:
         """Create a message from a reader.
 
         `block` determines whether or not we should wait for the `reader`,
@@ -144,7 +147,7 @@ class Message:
 
         return cls(message_type, data)
 
-    def send(self, writer):
+    def send(self, writer: FIFOBaseClass):
         """Send a message using a writer"""
 
         # Turn off interrupt signal handler temporarily;
@@ -176,7 +179,7 @@ class Message:
 class APL:
     """Represent the APL interpreter (session) inside Python."""
 
-    def __init__(self, conn):
+    def __init__(self, conn: "Connection"):
         self.store = ObjectStore()
         self.conn = conn
         # Keep track of how many operators have been defined, for name-mangling purposes.
@@ -398,22 +401,30 @@ class APL:
 class Connection:
     """A connection"""
     @staticmethod
-    def APLClient(DEBUG=False, dyalog=None, forceTCP=False):
-        """Start an APL client. This function returns an APL instance."""
-        
+    def APLClient(DEBUG=False, dyalog=None, forceTCP=False) -> "APL":
+        """Initialise a Python <> APL connection and return an APL instance.
+
+        Depending on the value of the Boolean flag `forceTCP`,
+        we prepare the connection in one of two ways;
+        If we are on Windows, or `forceTCP` is set,
+        we set up a bidirectional socket that uses TCP to communicate.
+        If `forceTCP` is not set, we create two `UnixFIFO` instances;
+        one for each endpoint.
+        """
+
         # if on Windows, use TCP always
         if os.name=='nt' or 'CYGWIN' in platform.system():
             forceTCP=True 
        
         if forceTCP:
             # use TCP 
-            inpipe = outpipe = IPC.TCPIO() # TCP connection is bidirectional
+            inpipe = outpipe = TCPIO()  # TCP connection is bidirectional
             outarg = 'TCP'
             inarg = str(inpipe.startServer())
         else:    
             # make two named pipes
-            inpipe = IPC.FIFO()
-            outpipe = IPC.FIFO()
+            inpipe = UnixFIFO()
+            outpipe = UnixFIFO()
             inarg = inpipe.name
             outarg = outpipe.name 
         
@@ -452,7 +463,7 @@ class Connection:
             
             return apl
 
-    def __init__(self, infile, outfile, signon=True):
+    def __init__(self, infile: FIFOBaseClass, outfile: FIFOBaseClass, signon: bool = True):
         self.infile = infile
         self.outfile = outfile
         self.apl = APL(self)
