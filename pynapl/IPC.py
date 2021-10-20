@@ -3,55 +3,47 @@
 # On Linux, this is implemented with mkfifo
 # On Windows, we use named pipes
 
-from __future__ import absolute_import
-from __future__ import division
-from __future__ import unicode_literals
-from __future__ import print_function
+import platform
+import os
+import select
+import socket
+import tempfile
 
-import sys, os, tempfile, select, ctypes, socket, platform
+from abc import ABC, abstractmethod
+from typing import Type
 
-from subprocess import Popen, PIPE
-from ctypes import * 
 
-# use Python 3 types on Python 2
-if sys.version_info.major == 2:
-    bytes, str = str, unicode 
- 
-# convert to bytes
-def to_bytes(x):
-    if type(x) is str:
-        return x.encode('utf-8')
-    else:
-        return x
+class FIFOBaseClass(ABC):
+    @abstractmethod
+    def avail(self, timeout: float):
+        raise NotImplementedError()
 
-def from_bytes(x):
-    if type(x) is bytes:
-        return str(x, 'utf-8')
-    else:
-        return x
+    @abstractmethod
+    def read(self, length: int) -> str:
+        raise NotImplementedError()
 
-class FIFO(object):
-    def avail(self,timeout): raise NotImplemented()
-    def read(self,amount): raise NotImplemented()
-    def write(self,data): raise NotImplemented()
-    def openRead(self): raise NotImplemented()
-    def openWrite(self): raise NotImplemented()
-    def close(self): raise NotImplemented()
-    def flush(self): raise NotImplemented()
-        
- 
-        
-class WindowsFIFO(FIFO):
-    pass
-    # Removed - didn't work. For now, TCP is used on Windows.
+    @abstractmethod
+    def write(self, data: str):
+        raise NotImplementedError()
 
-    
-class TCPIO(FIFO):
+    @abstractmethod
+    def close(self):
+        raise NotImplementedError()
+
+    @abstractmethod
+    def flush(self):
+        raise NotImplementedError()
+
+    def openRead(self): raise NotImplementedError()
+    def openWrite(self): raise NotImplementedError()
+
+
+class TCPIO(FIFOBaseClass):
     sock=None
     sockfile=None 
     srvsock=None 
-    
-    def connect(self,host,port):
+
+    def connect(self, host: str, port: int):
         # Attempt an IPV6 socket first
         try:
             sock = socket.socket(socket.AF_INET6, socket.SOCK_STREAM)
@@ -59,11 +51,11 @@ class TCPIO(FIFO):
         except:
             # try an IPV4 socket
             sock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
-            sock.connect((host,port))        
-        
+            sock.connect((host,port))
+
         self.sock = sock
         self.sockfile = sock.makefile('rwb')
-    
+
     def startServer(self):
         self.srvsock = socket.socket(socket.AF_INET, socket.SOCK_STREAM)
         self.srvsock.setsockopt(socket.SOL_SOCKET, socket.SO_REUSEADDR, 1)
@@ -91,9 +83,10 @@ class TCPIO(FIFO):
         self.sockfile=self.sock=None 
         
     def flush(self):
-        self.sockfile.flush() 
-        
-class UnixFIFO(FIFO):
+        self.sockfile.flush()
+
+
+class UnixFIFO(FIFOBaseClass):
     fileobj = None
     name = None
     mode = None
@@ -143,12 +136,10 @@ class UnixFIFO(FIFO):
         self.close()
 
 
-
-if os.name=='nt' or 'CYGWIN' in platform.system():
-    FIFO = WindowsFIFO 
-elif os.name=='posix':
+FIFO: Type[FIFOBaseClass]
+if os.name == "nt" or "CYGWIN" in platform.system():
+    FIFO = TCPIO
+elif os.name == "posix":
     FIFO = UnixFIFO
 else:
-    raise RuntimeError('unsupported OS')
-    
-
+    raise RuntimeError("Unsupported OS")
