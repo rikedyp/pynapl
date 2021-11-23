@@ -56,7 +56,7 @@ if __name__ == "__main__":
     setpgrp = getattr(os, "setpgrp", lambda: None)  # Only available on Unix.
     setpgrp()
 
-    signal.signal(signal.SIGINT, signal.default_int_handler)
+    signal.signal(signal.SIGINT, signal.SIG_DFL)
 
     if 'thread' in sys.argv:
         print("Starting thread")

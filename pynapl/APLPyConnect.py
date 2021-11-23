@@ -31,7 +31,7 @@ def ignoreInterrupts():
 
 def allowInterrupts():
     try:
-        return signal.signal(signal.SIGINT, signal.default_int_handler)
+        return signal.signal(signal.SIGINT, signal.SIG_DFL)
     except ValueError:
         pass
 
