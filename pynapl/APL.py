@@ -42,7 +42,7 @@ def client(inp: str, outp: str, threaded: bool = True):
             infile.openRead()
             outfile.openWrite()
 
-        conn = C.APLPyConnect.Connection(infile=infile, outfile=outfile)
+        conn = C.Connection(infile=infile, outfile=outfile)
         conn.runUntilStop()
 
     if threaded:
